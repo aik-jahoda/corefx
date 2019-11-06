@@ -5,6 +5,8 @@
 using System.Collections.Generic;
 using System.Text;
 
+#nullable enable
+
 namespace System.Net.Http.HPack
 {
     internal static class StaticTable
@@ -25,8 +27,53 @@ namespace System.Net.Http.HPack
 
         public static HeaderField Get(int index) => s_staticDecoderTable[index];
 
-        public static IReadOnlyDictionary<int, int> StatusIndex => s_statusIndex;
+        public static int GetIndex(byte[]? name, byte[]? value)
+        {
+            for (int i = 0; i < s_staticDecoderTable.Length; i++)
+            {
+                HeaderField headerField = s_staticDecoderTable[i];
+                if (NamesEquals(headerField.Name, name) && ValuesEquals(headerField.Value, value))
+                {
+                    return i + 1;
+                }
+            }
+            return 0;
+        }
 
+        private static bool NamesEquals(byte[]? name1, byte[]? name2)
+        {
+            if (ReferenceEquals(name1, name2))
+                return true;
+
+
+            if (name1 == null || name2 == null)
+                return false;
+
+
+            if (name1.Length != name2.Length)
+                return false;
+
+
+            for (int i = 0; i < name1.Length; i++)
+            {
+                if (name1[i] != name2[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool ValuesEquals(byte[]? value1, byte[]? value2)
+        {
+            if (value1?.Length == 0)
+            {
+                return true;
+            }
+
+            return NamesEquals(value1, value2);
+        }
+
+        public static IReadOnlyDictionary<int, int> StatusIndex => s_statusIndex;
         private static readonly HeaderField[] s_staticDecoderTable = new HeaderField[]
         {
             CreateHeaderField(":authority", ""),

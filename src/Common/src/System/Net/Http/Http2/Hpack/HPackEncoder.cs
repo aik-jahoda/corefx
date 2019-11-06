@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0.
 // See THIRD-PARTY-NOTICES.TXT in the project root for license information.
 
+#nullable enable
+
 using System.Collections.Generic;
 using System.Diagnostics;
 
@@ -9,7 +11,15 @@ namespace System.Net.Http.HPack
 {
     internal class HPackEncoder
     {
-        private IEnumerator<KeyValuePair<string, string>> _enumerator;
+        private IEnumerator<KeyValuePair<string, string>>? _enumerator;
+
+        private readonly DynamicTable _dynamicTable;
+
+
+        public HPackEncoder()
+        {
+            _dynamicTable = new DynamicTable(HPackDecoder.DefaultHeaderTableSize);
+        }
 
         public bool BeginEncode(IEnumerable<KeyValuePair<string, string>> headers, Span<byte> buffer, out int length)
         {
@@ -38,6 +48,7 @@ namespace System.Net.Http.HPack
 
         private bool Encode(Span<byte> buffer, bool throwIfNoneEncoded, out int length)
         {
+            Debug.Assert(_enumerator != null);
             int currentLength = 0;
             do
             {
@@ -189,6 +200,100 @@ namespace System.Net.Http.HPack
             {
                 destination[0] = 0x80;
                 return IntegerEncoder.Encode(index, 7, destination, out bytesWritten);
+            }
+
+            bytesWritten = 0;
+            return false;
+        }
+
+        private bool EncodeLiteralHeaderField(string name, string value, Span<byte> destination, out int bytesWritten, out int headerIndex)
+        {
+
+            byte[] rawName = Text.Encoding.ASCII.GetBytes(name);
+            byte[] rawValue = Text.Encoding.ASCII.GetBytes(value);
+
+            int index = StaticTable.GetIndex(rawName, rawValue);
+
+            if (index != 0)
+            {
+                headerIndex = index;
+                return EncodeIndexedHeaderField(index, destination, out bytesWritten);
+            }
+
+            index = StaticTable.GetIndex(rawName, Array.Empty<byte>());
+            if (index != 0)
+            {
+                headerIndex = index;
+                return EncodeLiteralHeaderFieldWithIncrementalIndexing(index, value, destination, out bytesWritten);
+
+            }
+
+            headerIndex = _dynamicTable.Insert(rawName, rawValue);
+
+            return EncodeLiteralHeaderFieldWithIncrementalIndexingNewName(name, value, destination, out bytesWritten);
+
+
+
+            // bytesWritten = 0;
+            return false;
+        }
+        private static bool EncodeLiteralHeaderFieldWithIncrementalIndexing(int index, string value, Span<byte> destination, out int bytesWritten)
+        {
+            // From https://tools.ietf.org/html/rfc7541#section-6.2.1
+            // ------------------------------------------------------
+            //  0   1   2   3   4   5   6   7
+            // +---+---+---+---+---+---+---+---+
+            // | 0 | 1 |      Index (6+)       |
+            // +---+---+-----------------------+
+            // | H |     Value Length (7+)     |
+            // +---+---------------------------+
+            // | Value String (Length octets)  |
+            // +-------------------------------+
+
+            if ((uint)destination.Length >= 2)
+            {
+                destination[0] = 0x40;
+                if (IntegerEncoder.Encode(index, 6, destination, out int indexLength))
+                {
+                    Debug.Assert(indexLength >= 1);
+                    if (EncodeStringLiteral(value, destination.Slice(indexLength), out int nameLength))
+                    {
+                        bytesWritten = indexLength + nameLength;
+                        return true;
+                    }
+                }
+            }
+
+            bytesWritten = 0;
+            return false;
+        }
+
+        private static bool EncodeLiteralHeaderFieldWithIncrementalIndexingNewName(string name, string value, Span<byte> destination, out int bytesWritten)
+        {
+            // From https://tools.ietf.org/html/rfc7541#section-6.2.1
+            // ------------------------------------------------------
+            //      0   1   2   3   4   5   6   7
+            //    +---+---+---+---+---+---+---+---+
+            //    | 0 | 1 |           0           |
+            //    +---+---+-----------------------+
+            //    | H |     Name Length (7+)      |
+            //    +---+---------------------------+
+            //    |  Name String (Length octets)  |
+            //    +---+---------------------------+
+            //    | H |     Value Length (7+)     |
+            //    +---+---------------------------+
+            //    | Value String (Length octets)  |
+            //    +-------------------------------+
+
+            if ((uint)destination.Length >= 3)
+            {
+                destination[0] =  0x40;
+                if (EncodeLiteralHeaderName(name, destination.Slice(1), out int nameLength) &&
+                    EncodeStringLiteral(value, destination.Slice(1 + nameLength), out int valueLength))
+                {
+                    bytesWritten = 1 + nameLength + valueLength;
+                    return true;
+                }
             }
 
             bytesWritten = 0;

@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0.
 // See THIRD-PARTY-NOTICES.TXT in the project root for license information.
 
+#nullable enable
+
 namespace System.Net.Http.HPack
 {
     internal class DynamicTable
@@ -46,7 +48,7 @@ namespace System.Net.Http.HPack
             }
         }
 
-        public void Insert(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value)
+        public int Insert(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value)
         {
             int entryLength = HeaderField.GetLength(name.Length, value.Length);
             EnsureAvailable(entryLength);
@@ -57,14 +59,18 @@ namespace System.Net.Http.HPack
                 // It is not an error to attempt to add an entry that is larger than the maximum size;
                 // an attempt to add an entry larger than the maximum size causes the table to be emptied
                 // of all existing entries and results in an empty table.
-                return;
+                return 0;
             }
 
             var entry = new HeaderField(name, value);
+
+            int position = _insertIndex;
             _buffer[_insertIndex] = entry;
             _insertIndex = (_insertIndex + 1) % _buffer.Length;
             _size += entry.Length;
             _count++;
+
+            return position;
         }
 
         public void Resize(int maxSize)
